@@ -1,0 +1,367 @@
+---
+title: "Final Project"
+author: "Emily Mojtabaee and Morgan Evans"
+date: "2024-04-31"
+output:
+  bookdown::pdf_document2: default
+  toc: true
+bibliography: references.bib
+---
+  
+```{r, eval=TRUE, echo = FALSE, message = FALSE, warning = FALSE}
+library(formatR)
+library(knitr)
+opts_chunk$set(tidy=TRUE, tidy.opts = list(width.cutoff=40))
+```
+
+# Abstract
+This study investigates the predictive potential of using historical NCAA tournament data to predict upsets in March Madness. Analyzing tournament records from 1985 to 2019, our research explores regional trends, team performances, and predictive models such as logistic regression, random forest, gradient boosting, and linear regression. While identifying consistent upset tendencies in certain regions and teams, our findings underscore the enduring unpredictability of March Madness. Despite unveiling factors influencing tournament outcomes, our models acknowledge the inherent uncertainty of the event. By offering insights into potential upsets for the 2024 tournament and offers potential NCAA basketball tournament prediction models.
+
+# Introduction 
+The unpredictability and excitement surrounding NCAA basketball tournaments have long captivated millions of people every year, but we were more captivated by the billion dollar prize for correctly predicting the entire March Madness. Warren Buffett offers one billion dollars to whoever can correctly predict all 67 games of the tournament. The odds of correctly picking all 67 games correctly if you just guess is 1 in over 147 quintillion and it is estimated if you know about basketball the odds are 1 in 120.2 billion [@wilco2024]. This challenge has sparked widespread interest and intrigue, prompting enthusiasts to explore innovative strategies and predictive models in the quest for perfection.
+
+In light of the formidable odds and the allure of Buffett's prize, our project seeks to delve into the intricate dynamics of NCAA basketball upsets, aiming to uncover patterns, trends, and predictors that could enhance the accuracy of tournament predictions. By analyzing comprehensive datasets over decades of tournament history and leveraging advanced statistical techniques, we aim to develop robust predictive models capable of identifying potential upsets with greater precision.
+
+# Analysis
+## Loading Packages
+```{r packages, message = FALSE, warning = FALSE}
+library(tidyverse)
+library(readr)
+library(data.table)
+library(randomForest)
+library(gbm)
+```
+
+## The Datasets
+```{r downloading, message = FALSE, warning = FALSE}
+data1985to2019 <- read_csv("combinedogdata.csv")
+final2024 <- read_csv("final2024data.csv")
+```
+```{r editstodatasets}
+# Editing 1985 to 2019 Dataset
+data1985to2019$Upset <- with(data1985to2019, 
+                             ifelse((Seed1 > Seed2 & Score1 > Score2) | (Seed2 > Seed1 & Score2 > Score1), 1, 0))
+data1985to2019$WP1 <- with(data1985to2019, round(W1 / (W1 + L1), 2))
+data1985to2019$WP2 <- with(data1985to2019, round(W2 / (W2 + L2), 2))
+data1985to2019$upsetMOV <- with(data1985to2019, ifelse(Seed1 > Seed2, Score1 - Score2, Score2 - Score1))
+data1985to2019$seedDiff <- with(data1985to2019, ifelse(Seed1 > Seed2, Seed1 - Seed2,Seed2 - Seed1))
+data1985to2019 <- subset(data1985to2019, select = -c(OSRS1, DSRS1, OSRS2, DSRS2))
+data1985to2019 <- data1985to2019[, -3]
+data1985to2019 <- data1985to2019 %>% rename(RegionName = `Region Name`)
+# Editing 2024 Dataset
+final2024$Upset <- with(final2024, 
+                        ifelse((Seed1 > Seed2 & Score1 > Score2) | (Seed2 > Seed1 & Score2 > Score1), 1, 0))
+final2024$WP1 <- with(final2024, round(W1 / (W1 + L1), 2))
+final2024$WP2 <- with(final2024, round(W2 / (W2 + L2), 2))
+final2024$upsetMOV <- with(final2024, ifelse(Seed1 > Seed2, Score1 - Score2, Score2 - Score1))
+final2024$seedDiff <- with(final2024, ifelse(Seed1 > Seed2, Seed1 - Seed2, Seed2 - Seed1))
+```
+
+### What are the Datasets?
+In order to make the datasets, we downloaded data from 1985 to 2019 provided by Data World that contained NCAA Tournament results [@roy2019] as well as data provided by Sports Reference College Basketball that contained the statistics on the teams in the tournaments each year [@NCAASeasons]. We then had to change the names of some of the teams in the datasets so that the datasets would match each other with insight from [@koyles2022]. The data1985to2019 file is the combined dataset of the results and team stats. There was no dataset available online for the 2024 Tournament results, so we had to create the dataset in R. We also downloaded Sports Reference College Basketball data on the teams in the 2024 tournament, changed the names accordingly, and combined this with the created dataset to create the final2024 file. 
+
+The next edits are our additions to the datasetss. We added Upset, WP1, WP2, upsetMOV, and seedDiff. We also removed the columns in the 1985 to 2019 data that were not available in the 2024 data. In the end, the final datasets contain these columns: Year, Round, Region Name, Seed1, Score1, Team1, Team2, Score2, Seed2, W1, L1, Pts1, Opp1, MOV1, SOS1, SRS1, W2, L2, Pts2, Opp2, MOV2, SOS2, SRS2, Upset, WP1, WP2, upsetMOV, seedDiff.
+
+### Meanings of columns
+Self Explanatory: Year, Round, Region Name, Score, and Team are self explanatory. For columns with the number 1 or 2 after the name, this refers back to the team (so Team1 or Team2, respectfully).
+
+More Complex: Seed is the ranking of the team (from 1 to 16). W is the number of wins before the tournament, and L is the number of losses before the tournament. Pts is the number of points the team scored per game on average, and Opp is the number of points the team's opponent scored per game on average. MOV is the margin of victory (this can be positive or negative depending on more or less wins and is calculated by Pts - Opp). SOS is strength of schedule, which is a metric that assesses the difficulty of a team's schedule (higher SOS generally means tougher competition).  SRS is simple rating system, which takes into account the average point differential and SOS (so this is MOV + SOS).
+
+Our variables: When creating out variables, we had to take seeds rather than teams into account since Team1 and Team2 do not necessarily correlate to a higher or lower seeded team. We have defined an upset as a team with a higher ranking (numerically lower seed) losing to a team with a lower ranking (numerically higher seed). Upset was created as a binary variable to be 1 when there is an upset and 0 when there is not an upset. WP is the winning percentage, so this is the number of wins over the total number of games (found by adding the wins and losses). upsetMOV is the margin of victory for each lower seeded team for that game (this variable is positive when there is an upset and negative when there is not an upset). Lastly, seedDiff is the difference between the seeds and was created to always be positive. 
+
+## Comparisons
+### Regions
+We will start by looking at which regions have the most upsets. Do some regions have more upsets than others?
+```{r regiontable}
+RegionUpsets <- data1985to2019 %>% group_by(RegionName) %>% 
+  summarize(CountOfUpsets = sum(Upset == 1, na.rm = TRUE), CountOfNonUpsets = sum(Upset == 0, na.rm = TRUE))
+RegionUpsets <- RegionUpsets %>% mutate(comparison = CountOfUpsets/CountOfNonUpsets)
+RegionUpsets
+```
+```{r graph1, fig.cap = "Count of Upsets and Non-Upsets by Region"}
+ggplot(data = RegionUpsets) +
+  geom_bar(aes(x = as.numeric(as.factor(RegionName)) - 0.2, y = CountOfUpsets, fill = "Upsets"),
+           stat = "identity", position = position_dodge(), width = 0.3) +
+  geom_bar(aes(x = as.numeric(as.factor(RegionName)) + 0.2, y = CountOfNonUpsets, fill = "Non-Upsets"),
+           stat = "identity", position = position_dodge(), width = 0.3) +
+  scale_fill_manual(values = c("Upsets" = "red", "Non-Upsets" = "blue")) +
+  scale_x_continuous(name = "Region Name", breaks = 1:length(RegionUpsets$RegionName), 
+                     labels = RegionUpsets$RegionName) +
+  labs(y = "Count", title = "Count of Upsets and Non-Upsets by Region") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r graph2, fig.cap = "Upsets over Nonupsets"}
+ggplot(RegionUpsets, aes(RegionName, comparison)) + 
+  geom_col() + 
+  labs(x = "Region Name", y = "Upsets over NonUpsets", title = "Upsets over Nonupsets") + 
+  theme_minimal()
+```
+The Figure (\@ref(fig:graph1)) and the first table directly compare the number of upsets and non-upsets in the regions. It is clear that the East, Midwest, and West have the most upsets, but they also have the most games. In order to better look at this data, we can look at the second graph with the comparisons, which calculates the number of upsets over non-upsets. A comparison of 1 would indicate there is the same number of upsets than non-upsets. As we can see, almost all of the regions have around the same comparison, with the championship being the lowest at 0.25. However, the Southwest is an outlier, with more upsets than non-upsets. This brings the question: What is different about the Southwest that could have caused this?
+
+When looking into the past of the NCAA, the tournament has primarily used East, Midwest, South, and West. However, there have been periods of time where South was not used; instead, Southeast was used from 1985 to 1991 and both Southeast and Southwest were used once in 2011 to replace South and Midwest, which has caused the lower number of games in the South and the very small number of games in the Southwest [@wilco2024march]. The Southwest being an outlier indicates that just for the year 2011, there were more upsets in the Southwest than non-upsets. It would be better, when analyzing the Southwest, to look at the data from 2011. 
+
+### 2011
+```{r 2011}
+RegionUpsets2011 <- data1985to2019 %>% filter(Year == 2011) %>% group_by(RegionName) %>% 
+  summarize(CountOfUpsets = sum(Upset == 1, na.rm = TRUE), 
+            CountOfNonUpsets = sum(Upset == 0, na.rm = TRUE))
+RegionUpsets2011 <- RegionUpsets2011 %>% mutate(comparison = CountOfUpsets/CountOfNonUpsets)
+RegionUpsets2011
+ggplot(data = RegionUpsets2011) +
+  geom_bar(aes(x = as.numeric(as.factor(RegionName)) - 0.2, y = CountOfUpsets, fill = "Upsets"),
+           stat = "identity", position = position_dodge(), width = 0.3) +
+  geom_bar(aes(x = as.numeric(as.factor(RegionName)) + 0.2, y = CountOfNonUpsets, fill = "Non-Upsets"),
+           stat = "identity", position = position_dodge(), width = 0.3) +
+  scale_fill_manual(values = c("Upsets" = "red", "Non-Upsets" = "blue")) +
+  scale_x_continuous(name = "Region Name", breaks = 1:length(RegionUpsets2011$RegionName), 
+                     labels = RegionUpsets2011$RegionName) +
+  labs(y = "Count", title = "Count of Upsets and Non-Upsets by Region") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggplot(RegionUpsets2011, aes(RegionName, comparison)) + 
+  geom_col() + 
+  labs(x = "Region Name", y = "Upsets over NonUpsets") + 
+  theme_minimal()
+```
+When just looking into 2011, it is clear that Southwest is still an outlier, containing more upsets than any other region. The explanation for this is unclear, so we will analyze some of the statistics on those teams.
+
+```{r 2011model}
+data2011 <- data1985to2019 %>% filter(Year == 2011)
+model <- lm(Upset ~ seedDiff + WP1 + WP2 + SOS1 + SRS1 + SOS2 + SRS2, data = data2011)
+summary(model)
+```
+When looking at 2011, there does not seem to be a clear indicator of what the teams had that caused more upsets as none of the coefficients are significant. This goes to show how unpredictable March Madness really is. We have a variable with a clear difference, yet no indication of why this is so. We will continue looking at more data to find some more predictors of March Madness.
+
+Next, we will look at which teams have had the most upsets. When predicted to win, which teams lost the most?
+
+### Better Teams in general
+```{r BetterTeams}
+BetterTeams <- data1985to2019 %>% 
+  rowwise() %>% 
+  mutate(BetterSeed = if_else(Seed1 < Seed2, Seed1, Seed2), 
+         BetterSeedTeam = if_else(Seed1 < Seed2, Team1, Team2))
+BetterTeamsupsets <- BetterTeams %>% 
+  group_by(BetterSeedTeam) %>% 
+  summarize(TotalUpsets = sum(Upset), Count = length(BetterSeedTeam))
+BetterTeamsupsets <- BetterTeamsupsets %>% 
+  mutate(compare = TotalUpsets/Count) %>% 
+  arrange(desc(compare))
+BetterTeamsupsets
+MostUpsets <- BetterTeamsupsets %>% 
+  filter(Count >= 5, compare > .45) %>% 
+  arrange(desc(compare))
+MostUpsets
+```
+
+When looking at how many upsets each team had, there were many above the 50% level, but many only played a couple of games. Therefore, we filtered, the table to include only teams that had at least 5 games and looked at teams above the 40% level, meaning they lost over 40% of games they were predicted to win. This resulted in 19 teams.
+
+The teams are Ole Miss, VCU, Georgia, USC, Nevada, Charlotte, Creighton, New Mexico, BYU, California, Clemson, Providence, Wichita St, Marquette, Kansas St, Miami, Mississippi St, Vanderbilt, and Washington.
+
+What this indicates is that if these teams are predicted to win, there is a over a 45% chance that they lose. The filtering to to at least 5 games was only done so that there was enough information to make a viable conjecture of the chances of the teams winning or losing. 
+
+### Worse Teams in general
+Next, we will look at when predicted to lose, which teams won the most?
+```{r WorseTeams}
+WorseTeams <- data1985to2019 %>% 
+  rowwise() %>% 
+  mutate(WorseSeed = if_else(Seed1 > Seed2, Seed1, Seed2), 
+         WorseSeedTeam = if_else(Seed1 > Seed2, Team1, Team2))
+WorseTeamsupsets <- WorseTeams %>% 
+  group_by(WorseSeedTeam) %>% 
+  summarize(TotalUpsets = sum(Upset), Count = length(WorseSeedTeam))
+WorseTeamsupsets <- WorseTeamsupsets %>% 
+  mutate(compare = TotalUpsets/Count) %>% arrange(desc(compare))
+WorseTeamsupsets
+MostUpsetsWorse <- WorseTeamsupsets %>% 
+  filter(Count >= 5, compare > .45) %>% 
+  arrange(desc(compare))
+MostUpsetsWorse
+```
+
+When looking at how many upsets each team had, there were many above the 50% level, but once again, many only played a couple of games. Therefore, we filtered, the table to include only teams that had at least 5 games and looked at teams above the 40% level, meaning they won over 40% of games they were predicted to lose This also resulted in 20 teams.
+
+The teams are Loyola Chicago, Cleveland St, Villanova, Loyola Marymount, Aurburn, Connecticut, Florida, South Carolina, Tulane, Wichita St, Wyoming, Michigan St, Syracus, Dayton, Florida St, Marquette, Ohio St, Michigan, USC, and Washington.
+
+What this indicates is that if these teams are predicted to lose, there is a over a 45% chance that they win. The filtering to to at least 5 games was only done so that there was enough information to make a viable conjecture of the chances of the teams winning or losing. 
+
+An interesting note is that Marquette, USC, Washington, and Wichita St are in both datasets, meaning that when predicted to have one outcome, they had over a 45% chance of having the other outcome.
+
+We will now apply what we know about the better and worse seeded teams to the teams playing in 2024. 
+
+### Better Teams in 2024
+```{r BetterTeams2024}
+BetterTeams2024 <- final2024 %>% 
+  rowwise() %>% 
+  mutate(BetterSeed = if_else(Seed1 < Seed2, Seed1, Seed2), 
+         BetterSeedTeam = if_else(Seed1 < Seed2, Team1, Team2))
+BetterTeamsupsets2024 <- BetterTeams2024 %>% 
+  group_by(BetterSeedTeam) %>% 
+  summarize(TotalUpsets = sum(Upset), Count = length(BetterSeedTeam))
+BetterTeamsupsets2024 <- BetterTeamsupsets2024 %>% 
+  mutate(compare = TotalUpsets/Count) %>% 
+  arrange(desc(compare))
+betterteams <- left_join(BetterTeamsupsets2024, BetterTeamsupsets, by = "BetterSeedTeam")
+betterteams <- betterteams %>% rename(OGUpsets = TotalUpsets.y,
+                                    OGCount = Count.y,
+                                    OGcompare = compare.y,
+                                    Upsets2024 = TotalUpsets.x,
+                                    Count2024 = Count.x,
+                                    compare2024 = compare.x)
+betterteams
+Upsets2024 <- betterteams %>% 
+  filter(compare2024 > 0) %>% 
+  arrange(desc(compare2024))
+Upsets2024
+```
+In 2024, there were 19 teams that had upsets when they were predicted to win. BYU, Mississippi St, and Marquette are part of the predicted 45% chance of having an upset when predicted to win. ALl of the teams have had previous upsets, with only one team with no original data. By looking at the table, there does not seem to be correlation between original upsets and upsets from 2024, but we will look make a regression model of the comparisons to make sure of this.
+
+```{r regressionBetterTeams2024}
+regression2024teams <- lm(compare2024 ~ OGcompare, betterteams)
+summary(regression2024teams)
+```
+
+Although the coefficient on OGcompare is positive, which is an indication of when OGcompare increases, there is Upsets2024 is expected to increase, this is not statistically significant, indicating that there is no correlation between original comparison data and 2024 data, furthering the unpredictability of March Madness.
+
+We will now look at the worse seeded teams in 2024 and their upsets. 
+
+### Worse Teams in 2024
+```{r WorseTeams2024}
+WorseTeams2024 <- final2024 %>% 
+  rowwise() %>% 
+  mutate(WorseSeed = if_else(Seed1 > Seed2, Seed1, Seed2), 
+         WorseSeedTeam = if_else(Seed1 > Seed2, Team1, Team2))
+WorseTeamsupsets2024 <- WorseTeams2024 %>% 
+  group_by(WorseSeedTeam) %>% 
+  summarize(TotalUpsets = sum(Upset), Count = length(WorseSeedTeam))
+WorseTeamsupsets2024 <- WorseTeamsupsets2024 %>% 
+  mutate(compare = TotalUpsets/Count) %>% 
+  arrange(desc(compare))
+worseteams <- left_join(WorseTeamsupsets2024, WorseTeamsupsets, by = "WorseSeedTeam")
+worseteams <- worseteams %>% rename(OGUpsets = TotalUpsets.y,
+                                    OGCount = Count.y,
+                                    OGcompare = compare.y,
+                                    Upsets2024 = TotalUpsets.x,
+                                    Count2024 = Count.x,
+                                    compare2024 = compare.x)
+worseteams
+Upsets2024Worse <- worseteams %>% 
+  filter(compare2024 > 0) %>% 
+  arrange(desc(compare2024))
+Upsets2024Worse
+```
+In 2024, there were 16 teams that had upsets when they were predicted to win. Michigan St is part of the predicted 45% chance of having an upset when predicted to lose Two of the teams have had no previous upsets, with also two teams with no original data. By looking at the table, there seems to be more of a correlation between original upsets and upsets from 2024, but we will look make a regression model of the comparisons to make sure of this.
+
+```{r regressionWorseTeams2024}
+regression2024worseteams <- lm(compare2024 ~ OGcompare, worseteams)
+summary(regression2024worseteams)
+```
+
+This time, there is a much larger coefficient on OGcompare and it is statistically significant at the .1 level, indicating that an increase in OGcompare is correlated with an increase in .65 in compare2024, indicating that previous upset data for the worse teams was a better predictor for the upsets of the worse teams in the 2024 tournament. 
+
+This is interesting because our first analysis showed that we cannot predict the upsets for teams that are expected to win and lose, but we may be able to predict upsets for teams that are expected to lose and win. We will look at a graph for the worse teams since this turned out to be significant.
+
+```{r graphworseteams, fig.cap = "2024 Upsets and Original Comparisons"}
+ggplot(worseteams, aes(OGcompare, Upsets2024)) + geom_point() + geom_smooth(method = "lm", se = FALSE) + labs(title = "2024 Upsets and Original Comparisons")
+```
+
+With Figure (\@ref(fig:graphworseteams)), we can see that the regression clearly is not perfect, but most teams with a lower OGCompare had an Upset of 0 in 2024, while as we increased OGCompare, more teams had upsets in 2024, with one even having three upsets in the tournament. 
+
+Now that we have looked at regions as well as individual teams, we will go into making a model to predcit the upsets of the 2024 tournament.
+
+## Models
+### Our First Model (GLM)
+GLM model (Generalized Linear Model) uses logistic regression to predict the probability of an upset based on predictors such as seed difference, winning percentages, strength of schedule, and simple rating system. Logistical regression is a statistical method used for modeling binary outcome variables.
+```{r makingmodel}
+data_2024 <- final2024
+dataog <- data1985to2019
+dataog$Upset <- as.factor(dataog$Upset)
+model <- glm(Upset ~ seedDiff + WP1 + WP2 + SOS1 + SRS1 + SOS2 + SRS2, family = binomial(link="logit"), data = dataog)
+summary(model)
+data_2024$predicted_prob <- predict(model, newdata = data_2024, type = "response")
+data_2024
+```
+
+The logistic regression model shows that several predictors - WP1, WP2, SOS1, and SOS2 - significantly influence the likelihood of an upset in college basketball games, as evidenced by their low p-values. However, seed difference and team ratings (SRS1 and SRS2) do not show statistically significant effects on upset outcomes. The model exhibits a reasonable fit to the data, as indicated by the relatively low AIC value and the significant reduction in deviance.
+
+Now, we use the generalized linear model to predict 2024 outcomes. 
+```{r accuracy}
+data_2024$predicted_outcome <- ifelse(data_2024$predicted_prob > 0.5, 1, 0)
+data_2024
+correct_predictions <- sum(data_2024$predicted_outcome == data_2024$Upset)
+total_predictions <- nrow(data_2024)
+accuracy <- correct_predictions / total_predictions
+cat('GLM Model Accuracy:', accuracy)
+```
+The code calculates the predicted probabilities of upsets using the logistic regression model for the 2024 season. Then it compares the predicted outcomes with actual upsets to get an accuracy of about 64.52%. This indicates that the model correctly predicts upset outcomes for about 64.52% of the observations in the dataset.
+
+### Our Second Model (Random Forest Model)
+Random forest model is an ensemble learning method that constructs multiple decision trees during training and outputs the mode of the classes. They can handle nonlinear relationships and interactions well and avoid overfitting.
+```{r}
+train_data <- data1985to2019 %>% select(Upset, seedDiff, WP1, WP2, SOS1, SRS1, SOS2, SRS2)
+train_data$Upset <- as.factor(train_data$Upset)
+str(train_data)
+set.seed(1)
+rf_model <- randomForest(Upset ~ ., data = train_data, ntree = 100)
+print(rf_model)
+```
+The output shows the random forest classification model built using the 1985-2019 dataset. It consists of 100 trees, and at each split, the model considers 2 variables. The OBB estimate of 26.69% represents the model's performance on unseen data. The confusion matrix provides a breakdown of the model's predictions, where class 0 (no upset) has 1409 correct predictions and 178 incorrect predictions, resulting in a class error rate of about 11.22%. For class 1 (upset), there are 206 correct predictions and 410 incorrect predictions, leading to a class error rate of approximately 66.56%. Overall, while the model performs reasonably well for class 0 predictions, it struggles with class 1 predictions, as indicated by the higher error rate.
+
+Now, we use the random forest model to predict 2024 outcomes. 
+
+``` {r}
+predictions <- predict(rf_model, newdata = data_2024)
+accuracy <- mean(predictions == data_2024$Upset)
+cat('Random Forest Model accuracy:', accuracy)
+```
+
+The code calculates the predicted probabilities of upsets using the random forest model for the 2024 season. Then it compares the predicted outcomes with actual upsets to get an accuracy of about 75.81%. This indicates that the random forest model performs relatively well in predicting the outcome variable on the new data.
+
+### Our 3rd Model (GBM)
+GBM model (Gradient Boosting Machine) is another ensemble learning technique that builds a model in a stage-wise fashion by optimizing a differentiable loss function.
+``` {r}
+features <- c('seedDiff', 'WP1', 'WP2', 'SOS1', 'SRS1', 'SOS2', 'SRS2')
+target <- 'Upset'
+all_cols <- c(features, target)
+gbm_model <- gbm(Upset ~ ., data = data1985to2019[all_cols], distribution = 'bernoulli', n.trees = 1000, interaction.depth = 3)
+print(gbm_model)
+summary(gbm_model)
+```
+The GBM model indicates that all 7 predictors had non-zero influence, suggesting that they all contributed to the model's predictive power. The GBM model summary provides the relative importance of each predictor variable and the rel.inf column indicates the relative influence of each predictor on the model's predictions. The higher the value, the more influential the predictor. In this case, SRS2 has the highest relative importance, followed by SRS1, SOS2, SOS1, WP1, WP2, and seedDiff, suggesting that SRS2 has the most significant impact on the model's predictions, while seedDiff has the least. This is further illustrated in the graph.
+
+```{r}
+predictions <- predict(gbm_model, newdata = data_2024[all_cols], type = 'response')
+bin_predictions <- ifelse(predictions > 0.5, 1, 0)
+accuracy <- mean(bin_predictions == data_2024$Upset)
+cat('GBM model accuracy:', accuracy)
+```
+The code calculates the predicted probabilities of upsets using the gradient boosting machine model for the 2024 season. Then it compares the predicted outcomes with actual upsets to get an accuracy of about 67.74%. This indicates that the model correctly predicts upset outcomes for approximately 67.74% of the observations in the dataset.
+
+### Our 4th Model (lm)
+The linear model is a basic linear regression model, so it may not capture nonlinear relationships as well as other models. It works by modeling the relationship between a dependent variable and independent variables by fitting a linear equation to the observed data.
+``` {r}
+lm_model <- lm(Upset ~ seedDiff + WP1 + WP2 + SOS1 + SRS1 + SOS2 + SRS2, data = data1985to2019)
+summary(lm_model)
+```
+The linear regression model was fitted to predict the occurrence of an upset based on the above predictor variables, and the coefficients show the estimated effect of each predictor on the outcome. For example, a one-unit increase in "WP1" (win percentage) is associated with a decrease in the expected "Upset" outcome by approximately 1.18 units. The model has significant significance for several variables as indicated by the *. The R-squared value of 0.1254 suggests that the model explains around 12.54% of the variance in the data, with a p-value of less than 2.2e-16, indicating a highly significant model.
+
+``` {r}
+probabilities <- predict(lm_model, newdata = data_2024)
+predictions <- ifelse(probabilities > 0.5, 1, 0)
+accuracy <- mean(predictions == data_2024$Upset)
+cat('Linear regression model accuracy:', accuracy)
+```
+
+The code calculates the predicted probabilities of upsets using the linear model for the 2024 season. Then it compares the predicted outcomes with actual upsets to get an accuracy of about 69.35%. This indicates that the model correctly predicts approximately 69.35% of the outcomes in the test dataset.
+
+### Summary of Models
+The logistic regression model had an accuracy of around 64.52%, the random forest model had an accuracy of around 75.81%, the gradient boosted model had an accuracy of around 67.74%, and the linear regression model had an accuracy of around 69.35%. The random forest model demonstrated the highest accuracy in predicting the actual upsets for the 2024 NCAA tournament. This is probably due to its ability to handle complex relationships and interactions between predictor variables effectively and its aggregation of predictions from many trees helps reduce overfitting and improves generalization. Overall, all models exhibited reasonable predictive capabilities and could all be valuable tools for forecasting future march madness upsets.
+
+# Conclusion 
+Our project comprehensively explored the NCAA March Madness basketball upsets, hoping to uncover patterns and predictors to enhance the accuracy of tournament predictions. Through extensive analysis of historical tournament data and the development of predictive models, we gained valuable insights into the dynamics of March Madness upsets. We found that while regions like the East, Midwest, and West have historically seen more upsets, when normalized, most regions show similar upset rates. However, outliers like the Southwest in 2011 suggest that specific circumstances can influence upset frequency. By examining teams' performances in past tournaments, we identified both better-seeded and worse-seeded teams that consistently outperformed or underperformed their seed rankings, respectively. We developed several predictive models that demonstrated varying degrees of accuracy in predicting upsets for the 2024 NCAA tournament. The random forest model exhibited the highest accuracy, likely due to its ability to capture complex relationships and interactions among predictor variables. Our findings suggest that while NCAA basketball upsets are inherently unpredictable, our models offer valuable insights and tools for enhancing prediction accuracy. 
+
+# Contribution Statement
+Emily cleaned up the data, ran the comparisons, and did the analysis. Morgan created the models, wrote the introduction, abstract, and conclusion.
+
+This project has used [@R2024] and [@RStudio].
